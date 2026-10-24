@@ -1,0 +1,67 @@
+name: Build unsigned tvOS browser
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - name: Fetch reviewed browser source and tvOS 27 lifecycle fix
+        uses: actions/checkout@v4
+        with:
+          repository: KJRRR/tvOSBrowser
+          ref: 81ae5490d6a850a427e75f42f519aeadf69778f3
+          path: browser
+          persist-credentials: false
+      - name: Verify SDK and scene configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -showsdks
+          plutil -lint browser/_Project/Browser/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName" browser/_Project/Browser/Info.plist
+      - name: Build without any Apple account or signing credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project browser/_Project/Browser.xcodeproj \
+            -target Browser \
+            -configuration Debug \
+            -sdk appletvos \
+            SYMROOT="$RUNNER_TEMP/browser-build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tvos-package/Payload"
+          ditto "$RUNNER_TEMP/browser-build/Debug-appletvos/Browser.app" "$RUNNER_TEMP/tvos-package/Payload/Browser.app"
+          cd "$RUNNER_TEMP/tvos-package"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleSupportedPlatforms:0" Payload/Browser.app/Info.plist | grep -Fx AppleTVOS
+          test -f Payload/Browser.app/Browser
+          zip -qry tvOSBrowser-unsigned.ipa Payload
+          shasum -a 256 tvOSBrowser-unsigned.ipa > SHA256SUMS.txt
+      - name: Save build for local signing
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvOSBrowser-unsigned
+          path: |
+            ${{ runner.temp }}/tvos-package/tvOSBrowser-unsigned.ipa
+            ${{ runner.temp }}/tvos-package/SHA256SUMS.txt
+          retention-days: 3
+          if-no-files-found: error
