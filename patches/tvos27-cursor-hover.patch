@@ -1,0 +1,68 @@
+--- a/_Project/Browser/BrowserRemoteInputController.m
++++ b/_Project/Browser/BrowserRemoteInputController.m
+@@ -58,6 +58,7 @@
+ @property (nonatomic) CFTimeInterval lastDirectSelectPressTimestamp;
+ @property (nonatomic) CFTimeInterval lastSelectPressTimestamp;
+ @property (nonatomic) BOOL awaitingSecondSelectPress;
++@property (nonatomic) BOOL cursorHoverUpdatePending;
+ 
+ @end
+ 
+@@ -394,6 +395,45 @@
+     return YES;
+ }
+ 
++- (BOOL)canUpdateCursorHover {
++    return self.cursorModeEnabled &&
++        ![self.host browserRemoteInputControllerTopBarFocusActive] &&
++        ![self.host browserRemoteInputControllerTabOverviewVisible] &&
++        [self.host browserRemoteInputControllerPresentedViewController] == nil;
++}
++
++- (void)scheduleCursorHoverUpdate {
++    if (self.cursorHoverUpdatePending || ![self canUpdateCursorHover]) {
++        return;
++    }
++    self.cursorHoverUpdatePending = YES;
++    __weak typeof(self) weakSelf = self;
++    // The host's synchronous WebKit bridge pumps the run loop. Calling it in
++    // touchesMoved re-enters UIApplication sendEvent and traps on tvOS 27.
++    // Let UIKit finish delivery, and coalesce moves while the query is pending.
++    dispatch_async(dispatch_get_main_queue(), ^{
++        __strong typeof(weakSelf) self = weakSelf;
++        if (self == nil) {
++            return;
++        }
++        if (![self canUpdateCursorHover]) {
++            self.cursorHoverUpdatePending = NO;
++            return;
++        }
++        CGPoint point = self.cursorView.frame.origin;
++        NSString *containsLink = [self.host browserRemoteInputControllerHoverStateAtCursorPoint:point];
++        self.cursorHoverUpdatePending = NO;
++        if (![self canUpdateCursorHover]) {
++            return;
++        }
++        if (!CGPointEqualToPoint(point, self.cursorView.frame.origin)) {
++            [self scheduleCursorHoverUpdate];
++            return;
++        }
++        self.cursorView.image = [containsLink isEqualToString:@"true"] ? BrowserPointerCursor() : BrowserDefaultCursor();
++    });
++}
++
+ - (BOOL)handleTouchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+     (void)event;
+     if ([self.host browserRemoteInputControllerTopBarFocusActive]) {
+@@ -436,10 +476,7 @@
+             break;
+         }
+         if (self.cursorModeEnabled) {
+-            NSString *containsLink = [self.host browserRemoteInputControllerHoverStateAtCursorPoint:self.cursorView.frame.origin];
+-            if ([containsLink isEqualToString:@"true"]) {
+-                self.cursorView.image = BrowserPointerCursor();
+-            }
++            [self scheduleCursorHoverUpdate];
+         }
+         break;
+     }
