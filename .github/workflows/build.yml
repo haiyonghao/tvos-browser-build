@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - '.github/workflows/build.yml'
+      - 'patches/**'
 
 permissions:
   contents: read
@@ -14,6 +15,11 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 25
     steps:
+      - name: Fetch local compatibility patches
+        uses: actions/checkout@v4
+        with:
+          path: build-support
+          persist-credentials: false
       - name: Fetch reviewed browser source and tvOS 27 lifecycle fix
         uses: actions/checkout@v4
         with:
@@ -21,6 +27,12 @@ jobs:
           ref: 81ae5490d6a850a427e75f42f519aeadf69778f3
           path: browser
           persist-credentials: false
+      - name: Defer cursor hover queries until UIKit finishes event delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C browser apply --check "$GITHUB_WORKSPACE/build-support/patches/tvos27-cursor-hover.patch"
+          git -C browser apply "$GITHUB_WORKSPACE/build-support/patches/tvos27-cursor-hover.patch"
       - name: Verify SDK and scene configuration
         shell: bash
         run: |
@@ -38,6 +50,8 @@ jobs:
             -target Browser \
             -configuration Debug \
             -sdk appletvos \
+            MARKETING_VERSION=2.0.1 \
+            CURRENT_PROJECT_VERSION=2 \
             SYMROOT="$RUNNER_TEMP/browser-build" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
